@@ -1,0 +1,143 @@
+%
+% tomography_hw.m
+% 
+% Template function for GEO424_Introductory_Seismology (Prof. Jeroen Tromp)
+% final project on seismic
+% tomography and inverse methods.
+%
+% This program requires that you have pre-computed the design matrix and
+% loaded the pertinent data.
+%
+%
+% calls xxx
+% called by xxx
+%
+
+clear
+close all
+format short
+format compact
+
+ax1 = [-121 -114 31 37];        % lon-lat plotting dimensions
+
+%=======================================================================
+% LOAD DATA
+data = load('measure_vec.dat');
+ref = load('socal_vel_c0.dat');
+refc=ref(1);
+%d = zeros(length(data));
+
+% load sources
+[slon,slat,sind] = textread('events_lonlat.dat','%f%f%f','headerlines',1);
+nsrc = length(slat);
+
+% load receivers
+[rlon,rlat,rind] = textread('recs_lonlat.dat','%f%f%f','headerlines',1);
+nrec = length(rlat);
+
+% load spline centers
+[qlon,qlat] = textread('con_lonlat_q08.dat','%f%f','headerlines',0);
+nspline = length(qlat);
+q = 8;
+opts={1};
+
+%i=0;
+%for isrc = 1:nsrc
+    %for irec = 1:nrec
+        %i = i+1;
+        %[dis,azi] = distance(slat(isrc),slon(isrc),rlat(irec),rlon(irec));
+        %dis = deg2km(dis);
+        %d(i) = dis/data(i) - dis/refc;
+    %end
+%end
+
+Bvalue = zeros(286,286);
+for k = 1:286
+    Bvalue(k,:) = spline_vals(qlon(k),qlat(k),q,qlon,qlat,opts);
+end
+    
+%=======================================================================
+% lon-lat gridpoints for plotting
+
+numx = 100;
+[lonplot,latplot] = gridvec(ax1(1),ax1(2),numx,ax1(3),ax1(4));
+nplot = length(lonplot);
+
+% Compute design matrix for expanding a function in terms of splines;
+load('Array.mat');
+G = Array;
+% this is needed to view the tomographic models that we generate at the end.
+B = zeros(nplot,nspline);
+for ii=1:nspline
+    ff = spline_vals(qlon(ii),qlat(ii),q,lonplot,latplot,{1});
+    B(:,ii) = ff(:);
+end
+
+%-----------------------------------------
+% INVERSE PROBLEM HERE
+lamda = input('lamda=');
+op1 = G'*G+lamda^2.*eye(length(G'*G));
+op2 = op1\G';
+deltam = op2*data;
+%======================================================
+ratioc = zeros(286,1);
+for i = 1:286
+    ratioc(i) = sum(deltam.*Bvalue(:,i));
+end
+c = refc./(1-ratioc);
+
+%ITERATION
+nump = 1000;
+for iter = 1:4
+    data = G*deltam;
+    rms = sqrt(sum(data.^2)/length(data));
+    disp(['rms of ' num2str(iter) ' iteration is ' num2str(rms)]);
+    G = zeros(length(data),286);
+    [clon,clat,c0,step] = griddataXB(qlon,qlat,c,108,'cubic');
+    for isrc = 1:nsrc
+        for irec = 1:nrec
+            i = (isrc-1)*nrec + irec;
+            [dis,azi] = distance(slat(isrc),slon(isrc),rlat(irec),rlon(irec));
+            dis=deg2km(dis);
+            line_width = dis/(nump-1);
+            line_range = (0:line_width:dis);
+            [line_lat,line_lon] = latlon_from(slat(isrc),slon(isrc),azi,line_range);
+            path_c0 = zeros(length(line_lat),1);
+            for index = 1:length(line_lat)
+                path_c0(index) = c0(ceil((line_lat(index)-clat(1,1))/step),ceil((line_lon(index)-clon(1,1))/step));
+            end
+            for k = 1:286
+                path_value = spline_vals(qlon(k),qlat(k),q,line_lon,line_lat,opts);
+                G(i,k) = -sum(path_value./path_c0)*1000*line_width;
+            end
+        end
+    end
+    op1 = G'*G+lamda^2.*eye(length(G'*G));
+    op2 = op1\G';
+    deltam = op2*data;
+    ratioc = zeros(286,1);
+    for i = 1:286
+        ratioc(i) = sum(deltam.*Bvalue(:,i));
+    end
+    c = c./(1-ratioc);
+end
+
+data = G*deltam;
+ResM = op2*G;
+rms = sqrt(sum(data.^2)/length(data));
+disp(['rms of ' num2str(iter+1) ' iteration is ' num2str(rms)]);
+
+[X,Y,Z,step] = griddataXB(qlon,qlat,c,100,'cubic');
+%save tmp X Y Z;
+%save deltam deltam
+colors;
+[eigV,eigD] = eig(op1);
+
+for i = 1:length(ResM)
+    for j = 1:length(ResM)
+        if i==j
+            continue
+        end
+        ResM(i,j)=0;
+    end
+end
